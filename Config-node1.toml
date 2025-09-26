@@ -1,0 +1,7 @@
+vpn_ip = "10.0.0.1/24"
+
+[peers]
+"10.0.0.2" = "REPLACE_WITH_NODE2_DESTINATION_HASH"
+
+[announce_freq_secs]
+announce_freq_secs = 5

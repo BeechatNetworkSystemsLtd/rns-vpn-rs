@@ -1,0 +1,25 @@
+# Holochain Conductor Configuration for Node 1
+# This configures Holochain to use the VPN interface for mesh communication
+
+[network]
+type = "quic_bootstrap"
+bootstrap_server = "https://bootstrap.holo.host"
+network_type = "quic"
+
+[network.transport_pools]
+default = "quic"
+
+[[network.transport_pools.quic]]
+type = "quic"
+bind_to = "10.0.0.1:0"  # Bind to VPN interface IP
+
+# Optional: Configure specific network settings for mesh
+[network.quic]
+# These settings optimize for mesh networking
+initial_connection_timeout_ms = 10000
+connection_timeout_ms = 30000
+idle_connection_timeout_ms = 60000
+
+# Logging configuration
+[logging]
+type = "debug"
