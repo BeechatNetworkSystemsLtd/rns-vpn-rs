@@ -12,6 +12,9 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Ensure we're on the holochain branch
+git checkout holochain
+
 # Build the project
 echo "Building RNS-VPN-RS..."
 cargo build --release
