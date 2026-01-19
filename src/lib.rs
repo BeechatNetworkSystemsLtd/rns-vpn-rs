@@ -152,36 +152,45 @@ impl Client {
     // upstream link data: put link data into tun
     let upstream_loop = async || {
       let mut in_link_events = transport.in_link_events();
-      while let Ok(link_event) = in_link_events.recv().await {
-        match link_event.event {
-          LinkEvent::Data(payload) => if link_event.address_hash == in_destination_hash {
-            log::trace!("link {} payload ({})", link_event.id, payload.len());
-            match self.tun.send(payload.as_slice()).await {
-              Ok(n) => log::trace!("tun sent {n} bytes"),
-              Err(err) => {
-                log::error!("tun error sending bytes: {err:?}");
-                break
+      loop {
+        match in_link_events.recv().await {
+          Ok(link_event) => match link_event.event {
+            LinkEvent::Data(payload) => if link_event.address_hash == in_destination_hash {
+              log::trace!("link {} payload ({})", link_event.id, payload.len());
+              match self.tun.send(payload.as_slice()).await {
+                Ok(n) => log::trace!("tun sent {n} bytes"),
+                Err(err) => {
+                  log::error!("tun error sending bytes: {err:?}");
+                  break
+                }
+              }
+            }
+            LinkEvent::Activated => if link_event.address_hash == in_destination_hash {
+              log::debug!("link activated {}", link_event.id);
+              // look up destination in peers
+              for peer in peer_map.lock().await.values_mut() {
+                if peer.link_id == Some(link_event.id) {
+                  peer.link_active = true;
+                }
+              }
+            }
+            LinkEvent::Closed => if link_event.address_hash == in_destination_hash {
+              log::debug!("link closed {}", link_event.id);
+              // remove closed link
+              for peer in peer_map.lock().await.values_mut() {
+                if peer.link_id == Some(link_event.id) {
+                  peer.link_active = false;
+                  let _ = peer.link_id.take();
+                }
               }
             }
           }
-          LinkEvent::Activated => if link_event.address_hash == in_destination_hash {
-            log::debug!("link activated {}", link_event.id);
-            // look up destination in peers
-            for peer in peer_map.lock().await.values_mut() {
-              if peer.link_id == Some(link_event.id) {
-                peer.link_active = true;
-              }
-            }
+          Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+            log::debug!("recv in link event lagged: {n}");
           }
-          LinkEvent::Closed => if link_event.address_hash == in_destination_hash {
-            log::debug!("link closed {}", link_event.id);
-            // remove closed link
-            for peer in peer_map.lock().await.values_mut() {
-              if peer.link_id == Some(link_event.id) {
-                peer.link_active = false;
-                let _ = peer.link_id.take();
-              }
-            }
+          Err(err) => {
+            log::error!("recv in link event error: {err:?}");
+            break
           }
         }
       }
