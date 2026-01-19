@@ -1,0 +1,12 @@
+[build]
+target = "armv7-unknown-linux-gnueabihf"
+
+[target.armv7-unknown-linux-gnueabihf]
+linker = "arm-ostl-linux-gnueabi-gcc"
+rustflags = [
+    "-C", "link-arg=--sysroot=/opt/yocto-sdk/sysroots/cortexa7t2hf-neon-vfpv4-ostl-linux-gnueabi/",
+    "-C", "target-cpu=cortex-a7",
+    "-C", "link-arg=-mfloat-abi=hard",
+    "-C", "link-arg=-mcpu=cortex-a7",
+    "-L", "/opt/yocto-sdk/sysroots/cortexa7t2hf-neon-vfpv4-ostl-linux-gnueabi/lib"
+]
