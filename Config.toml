@@ -2,3 +2,17 @@ vpn_ip = "10.0.0.1/24"
 
 [peers]
 "10.0.0.2" = "xxx"
+
+[kaonic_radio_config]
+module = 0
+freq = 869535
+channel = 11
+channel_spacing = 200
+tx_power = 10
+
+[kaonic_radio_config.phy_config]
+type = "Ofdm"
+
+[kaonic_radio_config.phy_config.data]
+mcs = 6
+opt = 0

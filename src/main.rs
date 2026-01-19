@@ -8,8 +8,11 @@ use env_logger;
 use log;
 use pem;
 use reticulum::identity::PrivateIdentity;
+use reticulum::iface::kaonic::kaonic_grpc::KaonicGrpc;
+use reticulum::iface::kaonic::RadioConfig;
 use reticulum::iface::udp::UdpInterface;
 use reticulum::transport::{Transport, TransportConfig};
+use serde::{Deserialize, Serialize};
 use tokio;
 use x25519_dalek;
 
@@ -17,19 +20,32 @@ use rns_vpn;
 
 const DEFAULT_CONFIG_PATH: &str = "Config.toml";
 
-/// Command line arguments
+/// Choose one of `-a <kaonic-grpc-address>` or
+/// `-p <udp-listen-port> -f <udp-forward-address>`
 #[derive(Parser)]
 #[command(name = "Reticulum VPN Client", version)]
 pub struct Command {
   /// Reticulum UDP listen port number
-  #[arg(short, long)]
-  pub port: u16,
+  #[arg(short = 'p', long, group = "transport",
+    required_unless_present = "kaonic_grpc_address")]
+  pub udp_listen_port: Option<u16>,
   /// Reticulum UDP forward link address
-  #[arg(short, long)]
-  pub forward: std::net::SocketAddr,
+  #[arg(short = 'f', long, requires = "udp_listen_port")]
+  pub udp_forward_address: Option<std::net::SocketAddr>,
+  /// Reticulum Kaonic gRPC address
+  #[arg(short = 'a', long, group = "transport",
+    required_unless_present = "udp_listen_port")]
+  pub kaonic_grpc_address: Option<String>,
   /// [Optional] Reticulum private ID from name string
   #[arg(short, long)]
   pub id_string: Option<String>
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct Config {
+  #[serde(flatten)]
+  pub vpn_config: rns_vpn::Config,
+  pub kaonic_radio_config: Option<RadioConfig>
 }
 
 #[tokio::main]
@@ -37,7 +53,7 @@ async fn main() -> Result<(), process::ExitCode> {
   // parse command line args
   let cmd = Command::parse();
   // load config
-  let config: rns_vpn::Config = {
+  let config: Config = {
     let path = if let Ok(path) = std::env::var("RNS_VPN_CONFIG_PATH") {
       path
     } else {
@@ -49,9 +65,8 @@ async fn main() -> Result<(), process::ExitCode> {
   // init logging
   env_logger::Builder::new().filter_level(log::LevelFilter::Info).parse_default_env()
     .init();
-  log::info!("client start with port {} and forward IP {}", cmd.port, cmd.forward);
   // client
-  let client = match rns_vpn::Client::new(config) {
+  let client = match rns_vpn::Client::new(config.vpn_config) {
     Ok(client) => client,
     Err(err) => match err {
       rns_vpn::CreateClientError::RiptunError(riptun::Error::Unix {
@@ -110,9 +125,25 @@ async fn main() -> Result<(), process::ExitCode> {
     PrivateIdentity::new(private_key, sign_key)
   };
   let transport = Transport::new(TransportConfig::new("server", &id, true));
-  let _ = transport.iface_manager().lock().await.spawn(
-    UdpInterface::new(format!("0.0.0.0:{}", cmd.port), Some(cmd.forward.to_string())),
-    UdpInterface::spawn);
+  if let Some (port) = cmd.udp_listen_port {
+    // udp
+    let forward = cmd.udp_forward_address.unwrap();
+    log::info!("creating RNS UDP interface with listen port {port} and forward IP \
+      {forward}");
+    let _ = transport.iface_manager().lock().await.spawn(
+      UdpInterface::new(format!("0.0.0.0:{}", port), Some(forward.to_string())),
+      UdpInterface::spawn);
+  } else {
+    // kaonic
+    let address = cmd.kaonic_grpc_address.unwrap();
+    let radio_config = config.kaonic_radio_config.ok_or_else(||{
+      log::error!("config is missing kaonic_radio_config");
+      process::ExitCode::FAILURE
+    })?;
+    log::info!("creating RNS kaonic interface with kaonic grpc address {address}");
+    let _ = transport.iface_manager().lock().await.spawn(
+      KaonicGrpc::new(address, radio_config, None), KaonicGrpc::spawn);
+  }
   // run
   client.run(transport, id).await;
   log::info!("server exit");
