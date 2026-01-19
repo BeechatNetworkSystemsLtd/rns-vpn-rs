@@ -15,7 +15,7 @@ use x25519_dalek;
 
 use rns_vpn;
 
-const CONFIG_PATH: &str = "Config.toml";
+const DEFAULT_CONFIG_PATH: &str = "Config.toml";
 
 /// Command line arguments
 #[derive(Parser)]
@@ -38,7 +38,12 @@ async fn main() -> Result<(), process::ExitCode> {
   let cmd = Command::parse();
   // load config
   let config: rns_vpn::Config = {
-    let s = fs::read_to_string(CONFIG_PATH).unwrap();
+    let path = if let Ok(path) = std::env::var("RNS_VPN_CONFIG_PATH") {
+      path
+    } else {
+      DEFAULT_CONFIG_PATH.to_string()
+    };
+    let s = fs::read_to_string(path).unwrap();
     toml::from_str(&s).unwrap()
   };
   // init logging

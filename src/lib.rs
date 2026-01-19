@@ -68,6 +68,12 @@ impl Client {
   }
 
   pub async fn run(&self, mut transport: Transport, id: PrivateIdentity) {
+    // create in destination
+    let in_destination = transport
+      .add_destination(id, DestinationName::new("rns_vpn", "client")).await;
+    let in_destination_hash = in_destination.lock().await.desc.address_hash;
+    log::info!("created destination: {}",
+      format!("{}", in_destination_hash).trim_matches('/'));
     // set up peer map
     let peer_map = {
       let mut peer_map = BTreeMap::<IpAddr, Peer>::new();
@@ -84,12 +90,6 @@ impl Client {
       }
       tokio::sync::Mutex::new(peer_map)
     };
-    // create in destination
-    let in_destination = transport
-      .add_destination(id, DestinationName::new("rns_vpn", "client")).await;
-    let in_destination_hash = in_destination.lock().await.desc.address_hash;
-    log::info!("created destination: {}",
-      format!("{}", in_destination_hash).trim_matches('/'));
     // send announces
     let announce_loop = async || loop {
       transport.send_announce(&in_destination, None).await;
