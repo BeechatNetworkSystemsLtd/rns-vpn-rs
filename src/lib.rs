@@ -1,17 +1,19 @@
 use std::collections::BTreeMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
 
+use cidr;
 use etherparse;
 use ipnet::IpNet;
 use log;
 use riptun::TokioTun;
 use serde::{Deserialize, Serialize};
 use tokio;
+use tokio::sync::Mutex;
 
-use reticulum::destination::DestinationName;
+use reticulum::destination::SingleInputDestination;
 use reticulum::destination::link::{LinkEvent, LinkId};
 use reticulum::hash::AddressHash;
-use reticulum::identity::PrivateIdentity;
 use reticulum::transport::Transport;
 
 // TODO: config?
@@ -22,15 +24,16 @@ const fn default_announce_freq_secs() -> u32 { 1 }
 
 #[derive(Deserialize, Serialize)]
 pub struct Config {
-  pub vpn_ip: IpNet,
-  /// Map of (IP, destination hash)
-  pub peers: BTreeMap<IpAddr, String>,
+  pub network: cidr::Ipv4Cidr,
+  /// List of peer destination hashes
+  pub peers: Vec<String>,
   #[serde(default = "default_announce_freq_secs")]
   pub announce_freq_secs: u32
 }
 
 pub struct Client {
   config: Config,
+  in_destination: Arc<Mutex<SingleInputDestination>>,
   tun: Tun
 }
 
@@ -56,28 +59,26 @@ struct Tun {
 }
 
 impl Client {
-  pub fn new(config: Config) -> Result<Self, CreateClientError> {
-    if config.peers.contains_key(&config.vpn_ip.addr()) {
-      log::error!("configured VPN IP ({}) conflicts with peer IPs: {:?}",
-        config.vpn_ip, config.peers);
+  pub async fn new(config: Config, in_destination: Arc<Mutex<SingleInputDestination>>)
+    -> Result<Self, CreateClientError>
+  {
+    if config.peers.is_empty() {
+      log::warn!("no peers configured");
       return Err(CreateClientError::ConfigError(
-        "configured VPN IP exists in peer IPs".to_owned()))
+          "no peers: add at least one peer destination to configuration".to_string()))
     }
-    let tun = Tun::new(config.vpn_ip)?;
-    Ok(Client { config, tun })
+    let destination_hash = in_destination.lock().await.desc.address_hash;
+    let vpn_ip = destination_to_ip(destination_hash, config.network);
+    let tun = Tun::new(vpn_ip)?;
+    Ok(Client { config, in_destination, tun })
   }
 
-  pub async fn run(&self, mut transport: Transport, id: PrivateIdentity) {
-    // create in destination
-    let in_destination = transport
-      .add_destination(id, DestinationName::new("rns_vpn", "client")).await;
-    let in_destination_hash = in_destination.lock().await.desc.address_hash;
-    log::info!("created destination: {}",
-      format!("{}", in_destination_hash).trim_matches('/'));
+  pub async fn run(&self, transport: Transport) {
+    let in_destination_hash = self.in_destination.lock().await.desc.address_hash;
     // set up peer map
     let peer_map = {
       let mut peer_map = BTreeMap::<IpAddr, Peer>::new();
-      for (ip, dest) in self.config.peers.iter().map(|(k,v)| (k.clone(), v.clone())) {
+      for dest in self.config.peers.iter() {
         let dest = match AddressHash::new_from_hex_string(dest.as_str()) {
           Ok(dest) => dest,
           Err(err) => {
@@ -86,13 +87,14 @@ impl Client {
           }
         };
         let peer = Peer { dest, link_id: None, link_active: false };
-        assert!(peer_map.insert(ip, peer).is_none());
+        let ip = destination_to_ip(dest, self.config.network);
+        assert!(peer_map.insert(ip.addr(), peer).is_none());
       }
       tokio::sync::Mutex::new(peer_map)
     };
     // send announces
     let announce_loop = async || loop {
-      transport.send_announce(&in_destination, None).await;
+      transport.send_announce(&self.in_destination, None).await;
       tokio::time::sleep(
         std::time::Duration::from_secs(self.config.announce_freq_secs as u64)
       ).await;
@@ -262,5 +264,29 @@ impl Tun {
 
   pub async fn send(&self, datagram: &[u8]) -> Result<usize, std::io::Error> {
     self.tun.send(datagram).await
+  }
+}
+
+fn destination_to_ip(destination: AddressHash, prefix: cidr::Ipv4Cidr) -> IpNet {
+  let n = u32::from_be_bytes((&destination.as_slice()[12..16]).try_into().unwrap());
+  let network_bits = prefix.mask().to_bits();
+  let host_bits = (!network_bits) & n;
+  let addr = Ipv4Addr::from_bits(prefix.first_address().to_bits() | host_bits);
+  IpNet::new(IpAddr::V4(addr), network_bits.count_ones() as u8).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+  use reticulum::hash::AddressHash;
+  use super::*;
+  #[test]
+  fn dest_to_ip() {
+    use std::str::FromStr;
+    let destination =
+      AddressHash::new_from_hex_string("fb08aff16ec6f5ccf0d3eb179028e9c3").unwrap();
+    // 0xe9 = 233, 0xc3 = 195
+    let prefix = cidr::Ipv4Cidr::from_str("10.1.0.0/16").unwrap();
+    let ip = destination_to_ip(destination, prefix);
+    assert_eq!(ip.addr(), std::net::IpAddr::from_str("10.1.233.195").unwrap());
   }
 }

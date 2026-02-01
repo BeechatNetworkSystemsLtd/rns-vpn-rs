@@ -6,7 +6,8 @@ license = "MIT"
 edition = "2024"
 
 [dependencies]
-clap = { version= "4.*", features= ["derive"] }
+cidr = { version = "0.3.*", features = ["serde"] }
+clap = { version = "4.*", features = ["derive"] }
 ed25519-dalek = { version = "2.*", features = ["pem", "pkcs8"] }
 env_logger = "0.11.*"
 etherparse = "0.19.*"
