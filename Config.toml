@@ -1,7 +1,7 @@
-vpn_ip = "10.0.0.1/24"
+network = "10.20.0.0/16"
 
-[peers]
-"10.0.0.2" = "xxx"
+peers = [
+]
 
 [kaonic_radio_config]
 module = 0

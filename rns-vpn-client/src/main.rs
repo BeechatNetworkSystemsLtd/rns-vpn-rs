@@ -1,12 +1,14 @@
 //! Reticulum VPN client
 
 use std::{fs, process};
+use std::sync::Arc;
 
 use clap::Parser;
 use ed25519_dalek;
 use env_logger;
 use log;
 use pem;
+use nix;
 use reticulum::identity::PrivateIdentity;
 use reticulum::iface::kaonic::kaonic_grpc::KaonicGrpc;
 use reticulum::iface::kaonic::RadioConfig;
@@ -14,6 +16,7 @@ use reticulum::iface::udp::UdpInterface;
 use reticulum::transport::{Transport, TransportConfig};
 use serde::{Deserialize, Serialize};
 use tokio;
+use toml;
 use x25519_dalek;
 
 use rns_vpn;
@@ -65,23 +68,6 @@ async fn main() -> Result<(), process::ExitCode> {
   // init logging
   env_logger::Builder::new().filter_level(log::LevelFilter::Info).parse_default_env()
     .init();
-  // client
-  let client = match rns_vpn::Client::new(config.vpn_config) {
-    Ok(client) => client,
-    Err(err) => match err {
-      rns_vpn::CreateClientError::RiptunError(riptun::Error::Unix {
-        source: nix::errno::Errno::EPERM
-      }) => {
-        log::error!("EPERM error creating TUN interface: \
-          need to run with root permissions");
-        return Err(process::ExitCode::FAILURE)
-      }
-      _ => {
-        log::error!("error creating VPN client: {:?}", err);
-        return Err(process::ExitCode::FAILURE)
-      }
-    }
-  };
   // start reticulum
   log::info!("starting reticulum");
   let id = if let Some(name) = cmd.id_string {
@@ -144,8 +130,25 @@ async fn main() -> Result<(), process::ExitCode> {
     let _ = transport.iface_manager().lock().await.spawn(
       KaonicGrpc::new(address, radio_config, None), KaonicGrpc::spawn);
   }
+  let transport = Arc::new(tokio::sync::Mutex::new(transport));
   // run
-  client.run(transport, id).await;
-  log::info!("server exit");
+  let client = match rns_vpn::Client::run(config.vpn_config, transport, id).await {
+    Ok(client) => client,
+    Err(err) => match err {
+      rns_vpn::ClientError::RiptunError(riptun::Error::Unix {
+        source: nix::errno::Errno::EPERM
+      }) => {
+        log::error!("EPERM error creating TUN interface: \
+          need to run with root permissions");
+        return Err(process::ExitCode::FAILURE)
+      }
+      _ => {
+        log::error!("error running VPN client: {:?}", err);
+        return Err(process::ExitCode::FAILURE)
+      }
+    }
+  };
+  client.await_finished().await;
+  log::info!("client exit");
   Ok(())
 }

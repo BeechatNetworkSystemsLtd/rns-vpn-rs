@@ -1,25 +1,27 @@
 [package]
-name = "rns-vpn"
-description = "P2P Reticulum VPN"
+name = "rns-vpn-client"
+description = "P2P Reticulum VPN client application"
 version = "0.1.0"
 license = "MIT"
 edition = "2024"
 
 [dependencies]
-cidr = { version = "0.3.*", features = ["serde"] }
+clap = { version = "4.*", features = ["derive"] }
 ed25519-dalek = { version = "2.*", features = ["pem", "pkcs8"] }
-etherparse = "0.19.*"
-ipnet = { version = "2.*", features = ["serde"] }
+env_logger = "0.11.*"
 log = "0.4.*"
-rand_core = { version = "0.6.*", features = ["getrandom"] }
+nix = "0.23.*"
+pem = "3.*"
 riptun = { version = "0.1.*", default-features = false, features = ["tokio-impl"] }
 serde = { version = "1.*", features = ["derive"] }
 tokio = { version = "1.44.*", features = ["full"] }
+toml = "0.8.*"
+x25519-dalek = "2.*"
+
+[dependencies.rns-vpn]
+path = ".."
 
 [dependencies.reticulum]
 #git = "https://github.com/BeechatNetworkSystemsLtd/Reticulum-rs"
-path = "../Reticulum-rs"
+path = "../../Reticulum-rs"
 version = "0.1.*"
-
-[workspace]
-members = ["rns-vpn-client"]
